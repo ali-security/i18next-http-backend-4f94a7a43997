@@ -220,6 +220,19 @@ describe('security', () => {
         .to.equal(null)
     })
 
+    // GHSA-3cmx-xjww-583x: with a query-shaped template, `&` / `=` / `;` in
+    // a value add or override query parameters.
+    it('returns null for query-parameter injection in a query-shaped template', () => {
+      const t = '/locales/resources.json?lng={{lng}}&ns={{ns}}'
+      expect(interpolateUrl(t, { lng: 'de&ns=private&admin=true', ns: 'common' })).to.equal(null)
+      expect(interpolateUrl(t, { lng: 'de', ns: 'common&admin=true' })).to.equal(null)
+      expect(interpolateUrl(t, { lng: 'de;admin=true', ns: 'common' })).to.equal(null)
+      expect(interpolateUrl(t, { lng: 'de+en=x', ns: 'common' })).to.equal(null)
+      // the documented multiload shape keeps working
+      expect(interpolateUrl(t, { lng: 'de+en', ns: 'ns1+ns2' }))
+        .to.equal('/locales/resources.json?lng=de+en&ns=ns1+ns2')
+    })
+
     it('ignores __proto__ placeholder', () => {
       expect(interpolateUrl('/{{__proto__}}/x', { __proto__: { a: 1 } }))
         .to.equal('/{{__proto__}}/x')
@@ -376,6 +389,50 @@ describe('security', () => {
       backend.create(['en'], '../../admin', 'key', 'value', () => {
         expect(urls).to.eql([])
         done()
+      })
+    })
+
+    // GHSA-3cmx-xjww-583x: query-parameter injection through a query-shaped
+    // loadPath / addPath.
+    it('read refuses query-parameter injection in a query-shaped loadPath', (done) => {
+      const urls = []
+      const backend = new Backend(null, { loadPath: '/locales/resources.json?lng={{lng}}&ns={{ns}}', request: requestInto(urls) })
+      backend.read('de&ns=private&admin=true', 'common', (err, data) => {
+        expect(err.message).to.contain('unsafe lng/ns value')
+        expect(data).to.be(false)
+        backend.read('de;admin=true', 'common', (err, data) => {
+          expect(err.message).to.contain('unsafe lng/ns value')
+          expect(data).to.be(false)
+          expect(urls).to.eql([])
+          done()
+        })
+      })
+    })
+
+    it('readMulti refuses query-parameter injection in ns and keeps the multiload shape', (done) => {
+      const urls = []
+      const backend = new Backend(null, { loadPath: '/locales/resources.json?lng={{lng}}&ns={{ns}}', request: requestInto(urls) })
+      backend.readMulti(['de'], ['common&admin=true'], (err, data) => {
+        expect(err.message).to.contain('unsafe lng/ns value')
+        expect(data).to.be(false)
+        expect(urls).to.eql([])
+        backend.readMulti(['de', 'en'], ['ns1', 'ns2'], (err) => {
+          expect(err).to.be(null)
+          expect(urls).to.eql(['/locales/resources.json?lng=de+en&ns=ns1+ns2'])
+          done()
+        })
+      })
+    })
+
+    it('create refuses query-parameter injection in a query-shaped addPath', (done) => {
+      const urls = []
+      const backend = new Backend(null, { addPath: '/locales/add?lng={{lng}}&ns={{ns}}', request: requestInto(urls) })
+      backend.create(['de&ns=private', 'en'], 'common', 'key', 'value', () => {
+        expect(urls).to.eql(['/locales/add?lng=en&ns=common'])
+        backend.create(['en'], 'common=x', 'key', 'value', () => {
+          expect(urls).to.eql(['/locales/add?lng=en&ns=common'])
+          done()
+        })
       })
     })
 
