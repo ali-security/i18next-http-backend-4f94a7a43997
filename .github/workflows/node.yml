@@ -1,17 +1,24 @@
 name: node
 
 on:
-  push:
-    branches:
-      - master
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'Optional mocha spec file(s) to run instead of the full npm test chain'
+        required: false
+        default: ''
+
+env:
+  NPM_CONFIG_REGISTRY: https://:2025-01-23T08%3A07%3A26.124000Z@time-machines-npm.sealsecurity.io/
 
 jobs:
   test:
     name: Test on node ${{ matrix.node }} and ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       matrix:
-        node: [ '20.x', '18.x', '16.x' ]
+        node: [ '22.x', '20.x', '18.x', '16.x' ]
         # os: [ubuntu-latest, windows-latest, macOS-latest]
         os: [ubuntu-latest]
     steps:
@@ -21,4 +28,19 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm install
-      - run: npm test
+      - run: |
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            npm run build && npx mocha ${{ inputs.test-filter }} -R spec --experimental-modules
+          else
+            npm test
+          fi
+      - name: Pack
+        if: matrix.node == '22.x'
+        run: npm pack
+      - name: Upload package tarball
+        if: matrix.node == '22.x'
+        uses: actions/upload-artifact@v4
+        with:
+          name: i18next-http-backend-tgz
+          path: i18next-http-backend-3.0.2.tgz
+          if-no-files-found: error
